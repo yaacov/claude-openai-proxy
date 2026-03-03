@@ -22,8 +22,8 @@ uv sync
 ## Run
 
 ```bash
-uv run python main.py                        # localhost:8080
-HOST=0.0.0.0 PORT=1234 uv run python main.py # all interfaces, custom port
+uv run python main.py                        # localhost:1234
+HOST=0.0.0.0 PORT=5000 uv run python main.py # all interfaces, custom port
 ```
 
 ## Endpoints
@@ -59,5 +59,5 @@ uv run ruff format --check . # check without writing
 | Variable         | Default     | Description                          |
 |------------------|-------------|--------------------------------------|
 | `HOST`           | `127.0.0.1` | Server listen address                |
-| `PORT`           | `8080`      | Server listen port                   |
+| `PORT`           | `1234`      | Server listen port                   |
 | `CLAUDE_TIMEOUT` | `300`       | Per-request subprocess timeout (sec) |
