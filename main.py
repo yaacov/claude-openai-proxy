@@ -10,7 +10,7 @@ logging.basicConfig(
     format="%(levelname)-5s %(name)-20s %(message)s",
 )
 
-from src.app import app  # noqa: E402
+from claude_openai_proxy.app import app  # noqa: E402
 
 if __name__ == "__main__":
     import uvicorn

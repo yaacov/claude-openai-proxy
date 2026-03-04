@@ -20,7 +20,7 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from src.models import (
+from claude_openai_proxy.models import (
     ChatCompletionChunk,
     ChatCompletionResponse,
     Choice,
@@ -32,7 +32,7 @@ from src.models import (
     ToolCallFunction,
     UsageInfo,
 )
-from src.tool_parser import extract_tool_calls
+from claude_openai_proxy.tool_parser import extract_tool_calls
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator

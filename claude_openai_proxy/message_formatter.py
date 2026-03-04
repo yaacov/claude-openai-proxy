@@ -12,7 +12,7 @@ import json
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from src.models import ChatMessage
+    from claude_openai_proxy.models import ChatMessage
 
 _ROLE_LABELS = {
     "user": "[User]",

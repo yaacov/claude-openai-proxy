@@ -8,15 +8,21 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from src.claude_cli import spawn_cli
-from src.message_formatter import extract_system_message, messages_to_prompt
-from src.models import (
+from claude_openai_proxy.claude_cli import spawn_cli
+from claude_openai_proxy.message_formatter import (
+    extract_system_message,
+    messages_to_prompt,
+)
+from claude_openai_proxy.models import (
     ChatCompletionRequest,
     ErrorDetail,
     ErrorResponse,
 )
-from src.response_builder import build_complete_response, build_streaming_response
-from src.system_prompt import build_system_prompt
+from claude_openai_proxy.response_builder import (
+    build_complete_response,
+    build_streaming_response,
+)
+from claude_openai_proxy.system_prompt import build_system_prompt
 
 logger = logging.getLogger(__name__)
 

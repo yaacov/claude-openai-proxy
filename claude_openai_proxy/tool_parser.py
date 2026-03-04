@@ -18,7 +18,7 @@ import json
 import re
 import uuid
 
-from src.models import ToolCall, ToolCallFunction
+from claude_openai_proxy.models import ToolCall, ToolCallFunction
 
 _TOOL_CALL_RE = re.compile(
     r"<tool_call>\s*(.*?)\s*</tool_call>",

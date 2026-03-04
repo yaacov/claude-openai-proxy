@@ -6,7 +6,7 @@ import json
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from src.models import ToolSpec
+    from claude_openai_proxy.models import ToolSpec
 
 _PREAMBLE = """\
 You are a language model serving API requests. You are NOT an interactive \
