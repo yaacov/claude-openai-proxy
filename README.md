@@ -15,6 +15,14 @@ text-in / text-out language model.
 ## Install
 
 ```bash
+pip install --user claude-openai-proxy
+```
+
+Make sure `~/.local/bin` is in your `PATH`.
+
+Or from source:
+
+```bash
 cd claude-openai-proxy
 uv sync
 ```
@@ -22,8 +30,14 @@ uv sync
 ## Run
 
 ```bash
-uv run python main.py                        # localhost:1234
-HOST=0.0.0.0 PORT=5000 uv run python main.py # all interfaces, custom port
+claude-openai-proxy                          # localhost:1234
+HOST=0.0.0.0 PORT=5000 claude-openai-proxy   # all interfaces, custom port
+```
+
+Or from source:
+
+```bash
+uv run python main.py
 ```
 
 ## Endpoints

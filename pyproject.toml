@@ -1,21 +1,37 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
 name = "claude-openai-proxy"
 version = "0.1.0"
 description = "Thin OpenAI-compatible API proxy backed by Claude Code CLI"
 requires-python = ">=3.11"
+license = "Apache-2.0"
+authors = [{ name = "yaacov" }]
+readme = "README.md"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+]
 dependencies = [
     "fastapi",
     "uvicorn[standard]",
     "pydantic",
 ]
 
+[project.urls]
+Homepage = "https://github.com/yaacov/claude-openai-proxy"
+Repository = "https://github.com/yaacov/claude-openai-proxy"
+
+[project.scripts]
+claude-openai-proxy = "claude_openai_proxy.__main__:main"
+
 [dependency-groups]
 dev = [
     "ruff",
 ]
-
-[project.scripts]
-claude-openai-proxy = "src.app:app"
 
 [tool.ruff]
 target-version = "py311"
@@ -37,4 +53,4 @@ select = [
 ignore = []
 
 [tool.ruff.lint.isort]
-known-first-party = ["src"]
+known-first-party = ["claude_openai_proxy"]
