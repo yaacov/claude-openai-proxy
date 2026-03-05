@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -37,10 +38,21 @@ app.add_middleware(
 )
 
 AVAILABLE_MODELS = [
+    "claude-sonnet-4-5",
+    "claude-haiku-4-5",
+    "claude-opus-4-6",
     "sonnet",
     "haiku",
     "opus",
 ]
+
+
+def normalize_model(raw: str) -> str:
+    """Strip date-pin suffixes (e.g. ``@20250805``) the CLI doesn't accept."""
+    name = re.sub(r"@\d+$", "", raw).strip()
+    if name != raw:
+        logger.info("Stripped date suffix: %r -> %r", raw, name)
+    return name
 
 
 # ── Health ──────────────────────────────────────────────────────────────────
@@ -82,10 +94,12 @@ async def chat_completions(request: ChatCompletionRequest):
     if not prompt.strip():
         prompt = "(empty)"
 
+    model = normalize_model(request.model)
+
     lines = spawn_cli(
         prompt=prompt,
         system_prompt=system_prompt,
-        model=request.model,
+        model=model,
     )
 
     try:
