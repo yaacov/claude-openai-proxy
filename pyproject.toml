@@ -31,6 +31,8 @@ claude-openai-proxy = "claude_openai_proxy.__main__:main"
 [dependency-groups]
 dev = [
     "ruff",
+    "pytest",
+    "pytest-asyncio",
 ]
 
 [tool.ruff]

@@ -68,10 +68,30 @@ uv run ruff format .         # format all files
 uv run ruff format --check . # check without writing
 ```
 
+### Test
+
+```bash
+uv run pytest               # run all tests
+uv run pytest -v            # verbose output
+```
+
+## Timeouts & Disconnect Handling
+
+The proxy guards against runaway requests with two independent timeouts and
+automatically cleans up when a client disconnects.
+
+| Guard | What it does |
+|---|---|
+| **Per-line timeout** (`CLAUDE_TIMEOUT`) | Kills the CLI if a single line of output takes longer than this many seconds. Catches hung processes. |
+| **Total request timeout** (`CLAUDE_MAX_REQUEST_TIMEOUT`) | Kills the CLI once the overall wall-clock time for the request exceeds this limit, regardless of per-line activity. |
+| **Client disconnect** | For both streaming and non-streaming responses the proxy polls for client disconnection and stops the underlying work immediately. |
+
 ## Environment Variables
 
-| Variable         | Default     | Description                          |
-|------------------|-------------|--------------------------------------|
-| `HOST`           | `127.0.0.1` | Server listen address                |
-| `PORT`           | `1234`      | Server listen port                   |
-| `CLAUDE_TIMEOUT` | `300`       | Per-request subprocess timeout (sec) |
+| Variable                    | Default     | Description                                       |
+|-----------------------------|-------------|---------------------------------------------------|
+| `HOST`                      | `127.0.0.1` | Server listen address                             |
+| `PORT`                      | `1234`      | Server listen port                                |
+| `CLAUDE_TIMEOUT`            | `300`       | Max seconds to wait for a single line of output   |
+| `CLAUDE_MAX_REQUEST_TIMEOUT`| `600`       | Max total wall-clock seconds per request          |
+| `DISABLE_BUILTIN_TOOLS`     | `1`         | Set to `0` to keep Claude CLI built-in tools enabled |
