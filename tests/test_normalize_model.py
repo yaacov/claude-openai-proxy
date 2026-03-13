@@ -8,6 +8,7 @@ def test_strips_date_suffix():
 
 
 def test_strips_date_suffix_sonnet():
+    assert normalize_model("claude-sonnet-4-6@20260101") == "claude-sonnet-4-6"
     assert normalize_model("claude-sonnet-4-5@20250101") == "claude-sonnet-4-5"
 
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -13,6 +14,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 DEFAULT_TIMEOUT = int(os.environ.get("CLAUDE_TIMEOUT", "300"))
+DEFAULT_MAX_REQUEST_TIMEOUT = int(os.environ.get("CLAUDE_MAX_REQUEST_TIMEOUT", "600"))
 DISABLE_BUILTIN_TOOLS = os.environ.get("DISABLE_BUILTIN_TOOLS", "1") == "1"
 
 
@@ -22,11 +24,15 @@ async def spawn_cli(
     model: str,
     *,
     timeout: int = DEFAULT_TIMEOUT,
+    max_request_timeout: int = DEFAULT_MAX_REQUEST_TIMEOUT,
 ) -> AsyncIterator[str]:
     """Spawn the Claude Code CLI and yield raw stdout lines (JSONL).
 
     The process is always invoked with ``--output-format stream-json``
     so we get incremental JSONL.
+
+    *timeout* caps how long we wait for a single line of output.
+    *max_request_timeout* caps the total wall-clock duration of the request.
 
     Set ``DISABLE_BUILTIN_TOOLS=0`` to keep Claude CLI built-in tools
     (Bash, Edit, etc.) enabled.  By default they are disabled so Claude
@@ -57,13 +63,29 @@ async def spawn_cli(
     )
 
     line_count = 0
+    start = time.monotonic()
     try:
         assert proc.stdout is not None
         while True:
+            elapsed = time.monotonic() - start
+            remaining = max_request_timeout - elapsed
+            if remaining <= 0:
+                logger.warning(
+                    "Claude CLI total request timeout after %ds", max_request_timeout
+                )
+                break
             try:
-                line = await asyncio.wait_for(proc.stdout.readline(), timeout=timeout)
+                line = await asyncio.wait_for(
+                    proc.stdout.readline(), timeout=min(timeout, remaining)
+                )
             except TimeoutError:
-                logger.warning("Claude CLI timed out after %ds", timeout)
+                if time.monotonic() - start >= max_request_timeout:
+                    logger.warning(
+                        "Claude CLI total request timeout after %ds",
+                        max_request_timeout,
+                    )
+                else:
+                    logger.warning("Claude CLI per-line timeout after %ds", timeout)
                 break
             if not line:
                 break
