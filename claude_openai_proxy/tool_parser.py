@@ -15,15 +15,31 @@ objects.  Any text outside the tags is returned as regular content.
 from __future__ import annotations
 
 import json
+import logging
 import re
 import uuid
 
 from claude_openai_proxy.models import ToolCall, ToolCallFunction
 
+logger = logging.getLogger(__name__)
+
 _TOOL_CALL_RE = re.compile(
     r"<tool_call>\s*(.*?)\s*</tool_call>",
     re.DOTALL,
 )
+
+_MCP_PREFIX_RE = re.compile(r"^mcp__[^_]+__")
+
+
+def normalize_tool_name(name: str) -> str:
+    """Strip ``mcp__<server>__`` prefixes that Claude sometimes hallucinates.
+
+    For example, ``mcp__mtv__mtv_read`` becomes ``mtv_read``.
+    """
+    cleaned = _MCP_PREFIX_RE.sub("", name)
+    if cleaned != name:
+        logger.info("Normalized tool name: %r -> %r", name, cleaned)
+    return cleaned
 
 
 def extract_tool_calls(
@@ -45,7 +61,7 @@ def extract_tool_calls(
         except json.JSONDecodeError:
             continue
 
-        name = obj.get("name", "")
+        name = normalize_tool_name(obj.get("name", ""))
         arguments = obj.get("arguments", {})
 
         calls.append(

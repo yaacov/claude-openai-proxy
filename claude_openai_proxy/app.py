@@ -124,10 +124,13 @@ async def _streaming_with_disconnect(
 
 
 async def _complete_with_disconnect(
-    lines: AsyncIterator[str], model: str, raw_request: Request
+    lines: AsyncIterator[str],
+    model: str,
+    raw_request: Request,
+    valid_tool_names: set[str] | None = None,
 ):
     """Run ``build_complete_response`` while polling for client disconnect."""
-    task = asyncio.create_task(build_complete_response(lines, model))
+    task = asyncio.create_task(build_complete_response(lines, model, valid_tool_names))
     try:
         while not task.done():
             if await raw_request.is_disconnected():
@@ -160,6 +163,10 @@ async def chat_completions(request: ChatCompletionRequest, raw_request: Request)
 
     model = normalize_model(request.model)
 
+    valid_tool_names: set[str] | None = None
+    if request.tools:
+        valid_tool_names = {t.function.name for t in request.tools}
+
     lines = spawn_cli(
         prompt=prompt,
         system_prompt=system_prompt,
@@ -170,7 +177,8 @@ async def chat_completions(request: ChatCompletionRequest, raw_request: Request)
         if request.stream:
             return StreamingResponse(
                 _streaming_with_disconnect(
-                    build_streaming_response(lines, request.model), raw_request
+                    build_streaming_response(lines, request.model, valid_tool_names),
+                    raw_request,
                 ),
                 media_type="text/event-stream",
                 headers={
@@ -179,7 +187,9 @@ async def chat_completions(request: ChatCompletionRequest, raw_request: Request)
                 },
             )
 
-        response = await _complete_with_disconnect(lines, request.model, raw_request)
+        response = await _complete_with_disconnect(
+            lines, request.model, raw_request, valid_tool_names
+        )
         return response
 
     except asyncio.CancelledError:

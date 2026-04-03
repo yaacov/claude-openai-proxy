@@ -32,7 +32,7 @@ from claude_openai_proxy.models import (
     ToolCallFunction,
     UsageInfo,
 )
-from claude_openai_proxy.tool_parser import extract_tool_calls
+from claude_openai_proxy.tool_parser import extract_tool_calls, normalize_tool_name
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -80,12 +80,46 @@ def _extract_native_tool_calls(event: dict) -> list[ToolCall]:
                 ToolCall(
                     id=block.get("id", ""),
                     function=ToolCallFunction(
-                        name=block.get("name", ""),
+                        name=normalize_tool_name(block.get("name", "")),
                         arguments=json.dumps(block.get("input", {})),
                     ),
                 )
             )
     return calls
+
+
+def _filter_valid_tool_calls(
+    calls: list[ToolCall],
+    valid_names: set[str] | None,
+) -> list[ToolCall]:
+    """Drop tool calls whose name doesn't match any tool the client provided."""
+    if not valid_names or not calls:
+        return calls
+    kept: list[ToolCall] = []
+    for call in calls:
+        if call.function.name in valid_names:
+            kept.append(call)
+        else:
+            logger.warning("Dropping hallucinated tool call: %r", call.function.name)
+    return kept
+
+
+def _deduplicate_tool_calls(calls: list[ToolCall]) -> list[ToolCall]:
+    """Remove duplicate tool calls that share the same (name, arguments)."""
+    seen: set[tuple[str, str]] = set()
+    unique: list[ToolCall] = []
+    for call in calls:
+        key = (call.function.name, call.function.arguments)
+        if key not in seen:
+            seen.add(key)
+            unique.append(call)
+        else:
+            logger.info(
+                "Deduplicated tool call: %s(%s)",
+                call.function.name,
+                call.function.arguments[:80],
+            )
+    return unique
 
 
 def _extract_usage(event: dict) -> UsageInfo:
@@ -105,6 +139,7 @@ def _extract_usage(event: dict) -> UsageInfo:
 async def build_complete_response(
     lines: AsyncIterator[str],
     request_model: str,
+    valid_tool_names: set[str] | None = None,
 ) -> ChatCompletionResponse:
     """Consume all JSONL lines and return a single ``ChatCompletionResponse``."""
     meta = _SessionMeta()
@@ -151,6 +186,9 @@ async def build_complete_response(
             full_text = remaining
             logger.info("Parsed %d tool call(s) from text", len(parsed_calls))
 
+    all_tool_calls = _filter_valid_tool_calls(all_tool_calls, valid_tool_names)
+    all_tool_calls = _deduplicate_tool_calls(all_tool_calls)
+
     content = full_text or None
     has_tool_calls = len(all_tool_calls) > 0
     finish_reason = "tool_calls" if has_tool_calls else "stop"
@@ -184,6 +222,7 @@ async def build_complete_response(
 async def build_streaming_response(
     lines: AsyncIterator[str],
     request_model: str,
+    valid_tool_names: set[str] | None = None,
 ) -> AsyncIterator[str]:
     """Yield ``data: <json>\\n\\n`` SSE strings as Claude produces output.
 
@@ -226,6 +265,8 @@ async def build_streaming_response(
                 buffered_text.append(text)
 
             calls = _extract_native_tool_calls(event)
+            calls = _filter_valid_tool_calls(calls, valid_tool_names)
+            calls = _deduplicate_tool_calls(calls)
             for index, tool_call in enumerate(calls):
                 tool_call_chunk = ChatCompletionChunk(
                     id=chunk_id,
@@ -264,6 +305,8 @@ async def build_streaming_response(
 
             full_text = "".join(buffered_text)
             remaining, parsed_calls = extract_tool_calls(full_text)
+            parsed_calls = _filter_valid_tool_calls(parsed_calls, valid_tool_names)
+            parsed_calls = _deduplicate_tool_calls(parsed_calls)
 
             if remaining:
                 content_chunk = ChatCompletionChunk(
