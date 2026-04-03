@@ -20,24 +20,14 @@ pip install --user claude-openai-proxy
 
 Make sure `~/.local/bin` is in your `PATH`.
 
-Or from source:
-
-```bash
-cd claude-openai-proxy
-uv sync
-```
+> More options (uv tool, pipx, from source) are covered in the
+> [installation guide](docs/install.md).
 
 ## Run
 
 ```bash
 claude-openai-proxy                          # localhost:1234
 HOST=0.0.0.0 PORT=5000 claude-openai-proxy   # all interfaces, custom port
-```
-
-Or from source:
-
-```bash
-uv run python main.py
 ```
 
 ## Endpoints
