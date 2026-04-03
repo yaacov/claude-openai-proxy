@@ -170,7 +170,7 @@ async def test_complete_with_disconnect_cancels_on_disconnect():
         await asyncio.sleep(10)
         yield "never"
 
-    async def slow_build(lines, model):
+    async def slow_build(lines, model, valid_tool_names=None):
         async for _ in lines:
             pass
         return {}

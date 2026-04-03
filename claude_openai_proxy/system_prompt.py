@@ -29,7 +29,12 @@ CRITICAL: When you want to call a tool, you MUST use this EXACT format \
 
 You MUST use <tool_call> tags. Do NOT output tool calls in any other format. \
 Do NOT use markdown code fences for tool calls. \
-Each <tool_call> block must contain valid JSON with "name" and "arguments" keys."""
+Each <tool_call> block must contain valid JSON with "name" and "arguments" keys.
+
+IMPORTANT: Use ONLY the exact tool names listed above. \
+Do NOT add any prefixes such as "mcp__", "mcp__server__", or similar. \
+Do NOT invent tool names that are not in the list above. \
+Do NOT emit duplicate tool calls with identical name and arguments."""
 
 _POSTAMBLE = """\
 Remember: follow the above instructions precisely. When using tools, \
