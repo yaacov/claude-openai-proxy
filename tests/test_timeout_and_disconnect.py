@@ -1,99 +1,10 @@
-"""Tests for wall-clock timeout in spawn_cli and disconnect cleanup in app."""
+"""Tests for streaming disconnect cleanup in the app."""
 
 from __future__ import annotations
 
-import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
-
-from claude_openai_proxy.claude_cli import spawn_cli
-
-# ── spawn_cli total wall-clock timeout ──────────────────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_spawn_cli_total_timeout_kills_process():
-    """When max_request_timeout is exceeded the generator stops and the
-    process is killed."""
-    lines_yielded: list[str] = []
-
-    async def slow_readline():
-        await asyncio.sleep(0.3)
-        return (
-            b'{"type":"assistant","message":{"content":'
-            b'[{"type":"text","text":"hi"}]}}\n'
-        )
-
-    mock_stdout = MagicMock()
-    mock_stdout.readline = slow_readline
-
-    mock_stderr = AsyncMock()
-    mock_stderr.read = AsyncMock(return_value=b"")
-
-    mock_proc = AsyncMock()
-    mock_proc.stdout = mock_stdout
-    mock_proc.stderr = mock_stderr
-    mock_proc.returncode = None
-    mock_proc.kill = MagicMock()
-    mock_proc.wait = AsyncMock()
-
-    with patch(
-        "claude_openai_proxy.claude_cli.asyncio.create_subprocess_exec",
-        return_value=mock_proc,
-    ):
-        gen = spawn_cli(
-            prompt="test",
-            system_prompt="sys",
-            model="sonnet",
-            timeout=300,
-            max_request_timeout=1,
-        )
-        async for line in gen:
-            lines_yielded.append(line)
-
-    assert len(lines_yielded) <= 4
-    mock_proc.kill.assert_called_once()
-
-
-@pytest.mark.asyncio
-async def test_spawn_cli_per_line_timeout():
-    """When a single readline takes longer than per-line timeout, the
-    generator stops."""
-
-    async def hang_readline():
-        await asyncio.sleep(10)
-        return b"never\n"
-
-    mock_stdout = MagicMock()
-    mock_stdout.readline = hang_readline
-
-    mock_stderr = AsyncMock()
-    mock_stderr.read = AsyncMock(return_value=b"")
-
-    mock_proc = AsyncMock()
-    mock_proc.stdout = mock_stdout
-    mock_proc.stderr = mock_stderr
-    mock_proc.returncode = None
-    mock_proc.kill = MagicMock()
-    mock_proc.wait = AsyncMock()
-
-    with patch(
-        "claude_openai_proxy.claude_cli.asyncio.create_subprocess_exec",
-        return_value=mock_proc,
-    ):
-        gen = spawn_cli(
-            prompt="test",
-            system_prompt="sys",
-            model="sonnet",
-            timeout=1,
-            max_request_timeout=60,
-        )
-        lines = [line async for line in gen]
-
-    assert lines == []
-    mock_proc.kill.assert_called_once()
-
 
 # ── Streaming disconnect ────────────────────────────────────────────────────
 
@@ -139,49 +50,59 @@ async def test_streaming_with_disconnect_passes_all_when_connected():
     assert len(chunks) == 3
 
 
-# ── Non-streaming disconnect ───────────────────────────────────────────────
+# ── API timeout handling ───────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_complete_with_disconnect_returns_result_when_connected():
-    from claude_openai_proxy.app import _complete_with_disconnect
+async def test_anthropic_timeout_returns_504():
+    """When the Anthropic SDK raises a timeout, the endpoint returns 504."""
+    from unittest.mock import patch
 
-    sentinel = {"id": "test", "choices": []}
+    from anthropic import APITimeoutError
 
-    async def fake_lines():
-        yield '{"type":"result"}'
+    from claude_openai_proxy.app import chat_completions
+    from claude_openai_proxy.models import ChatCompletionRequest, ChatMessage
 
-    mock_request = AsyncMock()
-    mock_request.is_disconnected = AsyncMock(return_value=False)
+    request = ChatCompletionRequest(
+        model="claude-sonnet-4-6",
+        messages=[ChatMessage(role="user", content="Hello")],
+    )
+    mock_raw_request = AsyncMock()
+    mock_raw_request.is_disconnected = AsyncMock(return_value=False)
 
     with patch(
-        "claude_openai_proxy.app.build_complete_response", return_value=sentinel
+        "claude_openai_proxy.app.create_message",
+        side_effect=APITimeoutError(request=None),
     ):
-        result = await _complete_with_disconnect(fake_lines(), "model", mock_request)
+        response = await chat_completions(request, mock_raw_request)
 
-    assert result is sentinel
+    assert response.status_code == 504
 
 
 @pytest.mark.asyncio
-async def test_complete_with_disconnect_cancels_on_disconnect():
-    from claude_openai_proxy.app import _complete_with_disconnect
+async def test_anthropic_status_error_forwards_code():
+    """When the Anthropic SDK raises APIStatusError, its status code is forwarded."""
+    from unittest.mock import patch
 
-    async def slow_lines():
-        await asyncio.sleep(10)
-        yield "never"
+    import httpx
+    from anthropic import APIStatusError
 
-    async def slow_build(lines, model, valid_tool_names=None):
-        async for _ in lines:
-            pass
-        return {}
+    from claude_openai_proxy.app import chat_completions
+    from claude_openai_proxy.models import ChatCompletionRequest, ChatMessage
 
-    mock_request = AsyncMock()
-    mock_request.is_disconnected = AsyncMock(side_effect=[False, True])
+    request = ChatCompletionRequest(
+        model="claude-sonnet-4-6",
+        messages=[ChatMessage(role="user", content="Hello")],
+    )
+    mock_raw_request = AsyncMock()
+    mock_raw_request.is_disconnected = AsyncMock(return_value=False)
 
-    with (
-        patch(
-            "claude_openai_proxy.app.build_complete_response", side_effect=slow_build
-        ),
-        pytest.raises(asyncio.CancelledError),
-    ):
-        await _complete_with_disconnect(slow_lines(), "model", mock_request)
+    mock_response = httpx.Response(
+        status_code=429, request=httpx.Request("POST", "https://example.com")
+    )
+    exc = APIStatusError(message="rate limited", response=mock_response, body=None)
+
+    with patch("claude_openai_proxy.app.create_message", side_effect=exc):
+        response = await chat_completions(request, mock_raw_request)
+
+    assert response.status_code == 429

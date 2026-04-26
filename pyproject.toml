@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "claude-openai-proxy"
 version = "0.1.3"
-description = "Thin OpenAI-compatible API proxy backed by Claude Code CLI"
+description = "Thin OpenAI-compatible API proxy backed by Anthropic Vertex AI"
 requires-python = ">=3.11"
 license = "Apache-2.0"
 authors = [{ name = "yaacov" }]
@@ -19,6 +19,7 @@ dependencies = [
     "fastapi",
     "uvicorn[standard]",
     "pydantic",
+    "anthropic[vertex]>=0.20.0",
 ]
 
 [project.urls]
