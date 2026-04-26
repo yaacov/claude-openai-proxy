@@ -3,16 +3,16 @@
 from __future__ import annotations
 
 import json
-
-import pytest
+from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 from claude_openai_proxy.models import ToolCall, ToolCallFunction
 from claude_openai_proxy.response_builder import (
-    _deduplicate_tool_calls,
-    _filter_valid_tool_calls,
+    _deduplicate,
+    _filter_valid,
     build_complete_response,
 )
-from claude_openai_proxy.tool_parser import extract_tool_calls, normalize_tool_name
+from claude_openai_proxy.tool_parser import normalize_tool_name
 
 # ── normalize_tool_name ─────────────────────────────────────────────────────
 
@@ -42,35 +42,14 @@ class TestNormalizeToolName:
     def test_strips_single_segment_server_name(self):
         assert normalize_tool_name("mcp__server__tool") == "tool"
 
+    def test_strips_underscored_server_name(self):
+        assert normalize_tool_name("mcp__my_server__tool") == "tool"
 
-# ── extract_tool_calls with normalization ───────────────────────────────────
-
-
-class TestExtractToolCallsNormalization:
-    def test_normalizes_mcp_prefix_in_xml_tags(self):
-        text = (
-            "<tool_call>\n"
-            '{"name": "mcp__mtv__mtv_read", '
-            '"arguments": {"command": "health"}}\n'
-            "</tool_call>"
-        )
-        remaining, calls = extract_tool_calls(text)
-        assert len(calls) == 1
-        assert calls[0].function.name == "mtv_read"
-        assert remaining == ""
-
-    def test_preserves_correct_name(self):
-        text = (
-            "<tool_call>\n"
-            '{"name": "mtv_read", "arguments": {"command": "health"}}\n'
-            "</tool_call>"
-        )
-        _, calls = extract_tool_calls(text)
-        assert len(calls) == 1
-        assert calls[0].function.name == "mtv_read"
+    def test_strips_multi_underscore_server_name(self):
+        assert normalize_tool_name("mcp__my_cool_server__read") == "read"
 
 
-# ── _filter_valid_tool_calls ────────────────────────────────────────────────
+# ── _filter_valid ───────────────────────────────────────────────────────────
 
 
 def _make_call(name: str, args: str = "{}") -> ToolCall:
@@ -80,41 +59,41 @@ def _make_call(name: str, args: str = "{}") -> ToolCall:
     )
 
 
-class TestFilterValidToolCalls:
+class TestFilterValid:
     def test_keeps_valid_calls(self):
         calls = [_make_call("mtv_read"), _make_call("debug_read")]
         valid = {"mtv_read", "debug_read", "metrics_read"}
-        result = _filter_valid_tool_calls(calls, valid)
+        result = _filter_valid(calls, valid)
         assert len(result) == 2
 
     def test_drops_hallucinated_calls(self):
         calls = [_make_call("mtv_read"), _make_call("set_context")]
         valid = {"mtv_read", "debug_read"}
-        result = _filter_valid_tool_calls(calls, valid)
+        result = _filter_valid(calls, valid)
         assert len(result) == 1
         assert result[0].function.name == "mtv_read"
 
     def test_no_filter_when_valid_names_is_none(self):
         calls = [_make_call("anything"), _make_call("goes")]
-        result = _filter_valid_tool_calls(calls, None)
+        result = _filter_valid(calls, None)
         assert len(result) == 2
 
     def test_empty_calls(self):
-        result = _filter_valid_tool_calls([], {"mtv_read"})
+        result = _filter_valid([], {"mtv_read"})
         assert result == []
 
 
-# ── _deduplicate_tool_calls ─────────────────────────────────────────────────
+# ── _deduplicate ────────────────────────────────────────────────────────────
 
 
-class TestDeduplicateToolCalls:
+class TestDeduplicate:
     def test_removes_exact_duplicates(self):
         args = json.dumps({"command": "health"})
         calls = [
             _make_call("mtv_read", args),
             _make_call("mtv_read", args),
         ]
-        result = _deduplicate_tool_calls(calls)
+        result = _deduplicate(calls)
         assert len(result) == 1
         assert result[0].function.name == "mtv_read"
 
@@ -123,67 +102,93 @@ class TestDeduplicateToolCalls:
             _make_call("mtv_read", json.dumps({"command": "health"})),
             _make_call("mtv_read", json.dumps({"command": "get provider"})),
         ]
-        result = _deduplicate_tool_calls(calls)
+        result = _deduplicate(calls)
         assert len(result) == 2
 
     def test_keeps_different_names(self):
         args = json.dumps({"command": "health"})
         calls = [_make_call("mtv_read", args), _make_call("debug_read", args)]
-        result = _deduplicate_tool_calls(calls)
+        result = _deduplicate(calls)
         assert len(result) == 2
 
     def test_empty_list(self):
-        assert _deduplicate_tool_calls([]) == []
+        assert _deduplicate([]) == []
 
 
 # ── Integration: build_complete_response ────────────────────────────────────
 
 
-async def _lines_from(items: list[str]):
-    for item in items:
-        yield item
+def _make_anthropic_message(
+    content_blocks: list,
+    model: str = "test-model",
+    input_tokens: int = 10,
+    output_tokens: int = 20,
+):
+    """Build a mock Anthropic Message for testing."""
+    message = MagicMock()
+    message.id = "msg_test123"
+    message.model = model
+
+    blocks = []
+    for block_def in content_blocks:
+        block = SimpleNamespace(**block_def)
+        blocks.append(block)
+    message.content = blocks
+
+    usage = SimpleNamespace(input_tokens=input_tokens, output_tokens=output_tokens)
+    message.usage = usage
+    return message
 
 
-@pytest.mark.asyncio
-async def test_complete_response_normalizes_and_validates():
-    """End-to-end: mcp__ prefix is stripped and hallucinated tool is dropped."""
-    events = [
-        json.dumps({"type": "system", "session_id": "s1", "model": "test"}),
-        json.dumps(
+def test_complete_response_text_only():
+    """Simple text response is converted correctly."""
+    msg = _make_anthropic_message([{"type": "text", "text": "Hello!"}])
+    resp = build_complete_response(msg, "test-model")
+    assert resp.choices[0].message.content == "Hello!"
+    assert resp.choices[0].finish_reason == "stop"
+    assert resp.choices[0].message.tool_calls is None
+
+
+def test_complete_response_tool_use():
+    """Tool-use blocks are converted to OpenAI tool_calls."""
+    msg = _make_anthropic_message(
+        [
             {
-                "type": "assistant",
-                "message": {
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": (
-                                "<tool_call>\n"
-                                '{"name": "mcp__mtv__mtv_read", '
-                                '"arguments": {"command": "health"}}\n'
-                                "</tool_call>\n"
-                                "<tool_call>\n"
-                                '{"name": "set_context", '
-                                '"arguments": {"key": "ns"}}\n'
-                                "</tool_call>"
-                            ),
-                        }
-                    ]
-                },
+                "type": "tool_use",
+                "id": "toolu_123",
+                "name": "mtv_read",
+                "input": {"command": "health"},
             }
-        ),
-        json.dumps(
-            {
-                "type": "result",
-                "result": "",
-                "usage": {"input_tokens": 10, "output_tokens": 20},
-            }
-        ),
-    ]
-
-    resp = await build_complete_response(
-        _lines_from(events), "test-model", valid_tool_names={"mtv_read"}
+        ]
     )
-    assert len(resp.choices) == 1
+    resp = build_complete_response(msg, "test-model")
+    assert resp.choices[0].finish_reason == "tool_calls"
+    tool_calls = resp.choices[0].message.tool_calls
+    assert tool_calls is not None
+    assert len(tool_calls) == 1
+    assert tool_calls[0].function.name == "mtv_read"
+    assert json.loads(tool_calls[0].function.arguments) == {"command": "health"}
+
+
+def test_complete_response_normalizes_and_validates():
+    """mcp__ prefix is stripped and hallucinated tool is dropped."""
+    msg = _make_anthropic_message(
+        [
+            {
+                "type": "tool_use",
+                "id": "toolu_1",
+                "name": "mcp__mtv__mtv_read",
+                "input": {"command": "health"},
+            },
+            {
+                "type": "tool_use",
+                "id": "toolu_2",
+                "name": "set_context",
+                "input": {"key": "ns"},
+            },
+        ]
+    )
+    resp = build_complete_response(msg, "test-model", valid_tool_names={"mtv_read"})
     tool_calls = resp.choices[0].message.tool_calls
     assert tool_calls is not None
     assert len(tool_calls) == 1
@@ -191,75 +196,57 @@ async def test_complete_response_normalizes_and_validates():
     assert resp.choices[0].finish_reason == "tool_calls"
 
 
-@pytest.mark.asyncio
-async def test_complete_response_deduplicates():
+def test_complete_response_deduplicates():
     """Duplicate tool calls with same name+args are collapsed."""
-    tc = (
-        "<tool_call>\n"
-        '{"name": "mtv_read", "arguments": {"command": "health"}}\n'
-        "</tool_call>"
-    )
-    events = [
-        json.dumps({"type": "system", "session_id": "s1", "model": "test"}),
-        json.dumps(
+    msg = _make_anthropic_message(
+        [
             {
-                "type": "assistant",
-                "message": {"content": [{"type": "text", "text": f"{tc}\n{tc}"}]},
-            }
-        ),
-        json.dumps(
+                "type": "tool_use",
+                "id": "toolu_1",
+                "name": "mtv_read",
+                "input": {"command": "health"},
+            },
             {
-                "type": "result",
-                "result": "",
-                "usage": {"input_tokens": 10, "output_tokens": 20},
-            }
-        ),
-    ]
-
-    resp = await build_complete_response(
-        _lines_from(events), "test-model", valid_tool_names={"mtv_read"}
+                "type": "tool_use",
+                "id": "toolu_2",
+                "name": "mtv_read",
+                "input": {"command": "health"},
+            },
+        ]
     )
+    resp = build_complete_response(msg, "test-model", valid_tool_names={"mtv_read"})
     tool_calls = resp.choices[0].message.tool_calls
     assert tool_calls is not None
     assert len(tool_calls) == 1
 
 
-@pytest.mark.asyncio
-async def test_complete_response_no_tools_passes_through():
+def test_complete_response_no_tools_passes_through():
     """When valid_tool_names is None, no filtering occurs."""
-    events = [
-        json.dumps({"type": "system", "session_id": "s1", "model": "test"}),
-        json.dumps(
+    msg = _make_anthropic_message(
+        [
             {
-                "type": "assistant",
-                "message": {
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": (
-                                "<tool_call>\n"
-                                '{"name": "any_tool", '
-                                '"arguments": {"x": 1}}\n'
-                                "</tool_call>"
-                            ),
-                        }
-                    ]
-                },
+                "type": "tool_use",
+                "id": "toolu_1",
+                "name": "any_tool",
+                "input": {"x": 1},
             }
-        ),
-        json.dumps(
-            {
-                "type": "result",
-                "result": "",
-                "usage": {"input_tokens": 5, "output_tokens": 5},
-            }
-        ),
-    ]
-
-    resp = await build_complete_response(
-        _lines_from(events), "test-model", valid_tool_names=None
+        ]
     )
+    resp = build_complete_response(msg, "test-model", valid_tool_names=None)
     tool_calls = resp.choices[0].message.tool_calls
     assert tool_calls is not None
     assert len(tool_calls) == 1
     assert tool_calls[0].function.name == "any_tool"
+
+
+def test_complete_response_usage():
+    """Usage tokens are mapped correctly."""
+    msg = _make_anthropic_message(
+        [{"type": "text", "text": "hi"}],
+        input_tokens=100,
+        output_tokens=50,
+    )
+    resp = build_complete_response(msg, "test-model")
+    assert resp.usage.prompt_tokens == 100
+    assert resp.usage.completion_tokens == 50
+    assert resp.usage.total_tokens == 150

@@ -1,24 +1,22 @@
-"""Convert an OpenAI messages array into a Claude CLI prompt string.
+"""Convert OpenAI messages to Anthropic message format.
 
-Responsibilities:
-  1. Extract the system message (if any) for separate --system-prompt handling.
-  2. Serialize the remaining user / assistant messages into a single prompt
-     string that Claude receives via ``-p``.
+Handles the structural differences between the two APIs:
+  - System messages are extracted for the separate ``system`` parameter.
+  - Assistant ``tool_calls`` become ``tool_use`` content blocks.
+  - Tool-result messages become ``tool_result`` blocks inside user messages.
+  - Consecutive same-role messages are merged (Anthropic requires alternation).
 """
 
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING
+import logging
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from claude_openai_proxy.models import ChatMessage
 
-_ROLE_LABELS = {
-    "user": "[User]",
-    "assistant": "[Assistant]",
-    "tool": "[Tool Result]",
-}
+logger = logging.getLogger(__name__)
 
 
 def extract_system_message(messages: list[ChatMessage]) -> str | None:
@@ -29,54 +27,98 @@ def extract_system_message(messages: list[ChatMessage]) -> str | None:
     return None
 
 
-def _format_assistant_message(message: ChatMessage) -> str:
-    """Format an assistant message, including any tool_calls."""
-    parts: list[str] = []
-    if message.content:
-        parts.append(message.content)
-    if message.tool_calls:
-        for tool_call in message.tool_calls:
-            function = tool_call.get("function", {})
-            parts.append(
-                json.dumps(
-                    {
-                        "tool_call": {
-                            "id": tool_call.get("id", ""),
-                            "name": function.get("name", ""),
-                            "arguments": function.get("arguments", "{}"),
-                        }
-                    }
-                )
-            )
-    return " ".join(parts) if parts else ""
+def _convert_tool_calls_to_blocks(tool_calls: list[dict[str, Any]]) -> list[dict]:
+    """Convert OpenAI-style tool_calls to Anthropic tool_use content blocks."""
+    blocks: list[dict] = []
+    for tc in tool_calls:
+        func = tc.get("function", {})
+        args_raw = func.get("arguments", "{}")
+        if isinstance(args_raw, str):
+            try:
+                args = json.loads(args_raw)
+            except json.JSONDecodeError:
+                args = {}
+        else:
+            args = args_raw
+
+        blocks.append(
+            {
+                "type": "tool_use",
+                "id": tc.get("id", ""),
+                "name": func.get("name", ""),
+                "input": args,
+            }
+        )
+    return blocks
 
 
-def _format_tool_message(message: ChatMessage) -> str:
-    """Format a tool-result message."""
-    result = {"tool_call_id": message.tool_call_id, "result": message.content or ""}
-    return json.dumps(result)
+def _merge_consecutive(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Merge consecutive same-role messages (Anthropic requires alternation)."""
+    merged: list[dict[str, Any]] = []
+    for msg in messages:
+        if merged and merged[-1]["role"] == msg["role"]:
+            prev_content = merged[-1]["content"]
+            curr_content = msg["content"]
+
+            if isinstance(prev_content, str):
+                prev_content = [{"type": "text", "text": prev_content}]
+            if isinstance(curr_content, str):
+                curr_content = [{"type": "text", "text": curr_content}]
+
+            merged[-1]["content"] = prev_content + curr_content
+        else:
+            merged.append(msg)
+    return merged
 
 
-def messages_to_prompt(messages: list[ChatMessage]) -> str:
-    """Serialize non-system messages into a labelled prompt string.
+def messages_to_anthropic(messages: list[ChatMessage]) -> list[dict[str, Any]]:
+    """Convert OpenAI-style messages to Anthropic message format.
 
-    The last user message is always included.  Earlier turns provide
-    conversational context so Claude can continue coherently.
+    System messages are skipped (handled separately via ``extract_system_message``).
+    The result list has alternating user/assistant roles as Anthropic requires.
     """
-    parts: list[str] = []
+    result: list[dict[str, Any]] = []
+
     for message in messages:
         if message.role == "system":
             continue
 
-        label = _ROLE_LABELS.get(message.role, f"[{message.role.title()}]")
+        if message.role == "user":
+            result.append({"role": "user", "content": message.content or ""})
 
-        if message.role == "assistant" and message.tool_calls:
-            content = _format_assistant_message(message)
+        elif message.role == "assistant":
+            if message.tool_calls:
+                content: list[dict] = []
+                if message.content:
+                    content.append({"type": "text", "text": message.content})
+                content.extend(_convert_tool_calls_to_blocks(message.tool_calls))
+                result.append({"role": "assistant", "content": content})
+            else:
+                result.append(
+                    {
+                        "role": "assistant",
+                        "content": message.content or "",
+                    }
+                )
+
         elif message.role == "tool":
-            content = _format_tool_message(message)
-        else:
-            content = message.content or ""
+            tool_result = {
+                "type": "tool_result",
+                "tool_use_id": message.tool_call_id or "",
+                "content": message.content or "",
+            }
+            if (
+                result
+                and result[-1]["role"] == "user"
+                and isinstance(result[-1]["content"], list)
+            ):
+                result[-1]["content"].append(tool_result)
+            else:
+                result.append({"role": "user", "content": [tool_result]})
 
-        parts.append(f"{label}: {content}")
+    result = _merge_consecutive(result)
 
-    return "\n\n".join(parts)
+    if result and result[0]["role"] != "user":
+        result.insert(0, {"role": "user", "content": "(continued)"})
+
+    return result

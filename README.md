@@ -1,16 +1,17 @@
 # Claude OpenAI Proxy
 
-A thin Python proxy that wraps the **Claude Code CLI** (`claude -p`) and
+A thin Python proxy that wraps the **Anthropic Vertex AI** SDK and
 exposes an **OpenAI-compatible** `/v1/chat/completions` API.
 
-Claude runs as a clean LLM — all built-in tools are disabled. A behavioral
-shim is injected into the system prompt so Claude behaves as a stateless
-text-in / text-out language model.
+Requests are translated from the OpenAI message format to the Anthropic
+format, sent to Claude via the Vertex AI API, and the responses are
+converted back to OpenAI-compatible JSON (or SSE for streaming).
 
 ## Prerequisites
 
-- **Claude Code CLI** installed and authenticated (`claude` must be on PATH)
 - Python 3.11+
+- A Google Cloud project with the Anthropic Vertex AI API enabled
+- Google Cloud credentials configured (e.g. `gcloud auth application-default login`)
 
 ## Install
 
@@ -65,23 +66,14 @@ uv run pytest               # run all tests
 uv run pytest -v            # verbose output
 ```
 
-## Timeouts & Disconnect Handling
-
-The proxy guards against runaway requests with two independent timeouts and
-automatically cleans up when a client disconnects.
-
-| Guard | What it does |
-|---|---|
-| **Per-line timeout** (`CLAUDE_TIMEOUT`) | Kills the CLI if a single line of output takes longer than this many seconds. Catches hung processes. |
-| **Total request timeout** (`CLAUDE_MAX_REQUEST_TIMEOUT`) | Kills the CLI once the overall wall-clock time for the request exceeds this limit, regardless of per-line activity. |
-| **Client disconnect** | For both streaming and non-streaming responses the proxy polls for client disconnection and stops the underlying work immediately. |
-
 ## Environment Variables
 
-| Variable                    | Default     | Description                                       |
-|-----------------------------|-------------|---------------------------------------------------|
-| `HOST`                      | `127.0.0.1` | Server listen address                             |
-| `PORT`                      | `1234`      | Server listen port                                |
-| `CLAUDE_TIMEOUT`            | `300`       | Max seconds to wait for a single line of output   |
-| `CLAUDE_MAX_REQUEST_TIMEOUT`| `600`       | Max total wall-clock seconds per request          |
-| `DISABLE_BUILTIN_TOOLS`     | `1`         | Set to `0` to keep Claude CLI built-in tools enabled |
+| Variable                      | Default     | Description                                            |
+|-------------------------------|-------------|--------------------------------------------------------|
+| `HOST`                        | `127.0.0.1` | Server listen address                                  |
+| `PORT`                        | `1234`      | Server listen port                                     |
+| `LOG_LEVEL`                   | `INFO`      | Python logging level                                   |
+| `MAX_TOKENS`                  | `8192`      | Default max tokens per response                        |
+| `ANTHROPIC_TIMEOUT`           | `600`       | Request timeout in seconds for the Anthropic SDK       |
+| `CLOUD_ML_REGION`             | —           | Google Cloud region (e.g. `us-east5`)                  |
+| `ANTHROPIC_VERTEX_PROJECT_ID` | —           | Google Cloud project ID                                |
